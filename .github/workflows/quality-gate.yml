@@ -1,0 +1,52 @@
+name: Quality Gate
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  push:
+    branches: [main, develop, master]
+
+jobs:
+  quality-gate:
+    name: Quality Gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch all history for better analysis
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type check
+        run: npx tsc --noEmit
+
+      - name: Lint check
+        run: npm run lint -- --max-warnings 0
+
+      - name: Build check
+        run: npm run build
+
+      - name: Check bundle size (if applicable)
+        run: |
+          if [ -d ".next" ]; then
+            echo "Build output size:"
+            du -sh .next || true
+          fi
+
+      - name: Quality Gate Summary
+        if: always()
+        run: |
+          echo "## Quality Gate Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "✅ Type checking: ${{ job.status == 'success' && 'Passed' || 'Failed' }}" >> $GITHUB_STEP_SUMMARY
+          echo "✅ Linting: ${{ job.status == 'success' && 'Passed' || 'Failed' }}" >> $GITHUB_STEP_SUMMARY
+          echo "✅ Build: ${{ job.status == 'success' && 'Passed' || 'Failed' }}" >> $GITHUB_STEP_SUMMARY
+

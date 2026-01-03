@@ -1,0 +1,226 @@
+name: CI Pipeline
+
+on:
+  push:
+    branches: [main, develop, master]
+  pull_request:
+    branches: [main, develop, master]
+
+# Cancel in-progress runs for the same workflow and branch
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Type Checking
+  typecheck:
+    name: TypeScript Type Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run TypeScript type check
+        run: npx tsc --noEmit --pretty
+        continue-on-error: false
+
+  # Linting
+  lint:
+    name: ESLint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run ESLint
+        run: npm run lint -- --max-warnings 0
+        continue-on-error: false
+
+  # Build Test
+  build:
+    name: Build Next.js App
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run lint
+        run: npm run lint
+
+      - name: Build application
+        run: npm run build
+        env:
+          # Add any required environment variables for build
+          NODE_ENV: production
+
+      - name: Check build output
+        run: |
+          if [ ! -d ".next" ]; then
+            echo "Build failed: .next directory not found"
+            exit 1
+          fi
+          echo "Build successful: .next directory exists"
+
+  # Security Audit
+  security:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run npm audit
+        run: npm audit --audit-level=moderate
+        continue-on-error: true
+
+      - name: Check for known vulnerabilities
+        run: |
+          npm audit --json > audit-results.json || true
+          if [ -f audit-results.json ]; then
+            VULNS=$(cat audit-results.json | grep -o '"vulnerabilities":{[^}]*}' | grep -o '"high":\s*[0-9]*' | grep -o '[0-9]*' || echo "0")
+            CRITICAL=$(cat audit-results.json | grep -o '"critical":\s*[0-9]*' | grep -o '[0-9]*' || echo "0")
+            if [ "$VULNS" != "0" ] || [ "$CRITICAL" != "0" ]; then
+              echo "⚠️ Security vulnerabilities detected!"
+              echo "High: $VULNS, Critical: $CRITICAL"
+              exit 1
+            fi
+          fi
+
+  # Dependency Check
+  dependencies:
+    name: Dependency Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Check for outdated dependencies
+        run: |
+          echo "Checking for outdated packages..."
+          npm outdated || true
+
+      - name: Verify package-lock.json is in sync
+        run: |
+          npm ci --dry-run
+          if [ $? -ne 0 ]; then
+            echo "❌ package-lock.json is out of sync with package.json"
+            exit 1
+          fi
+
+  # Node Version Compatibility (Optional - test on multiple Node versions)
+  node-compatibility:
+    name: Node.js Compatibility (${{ matrix.node-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: ['18', '20', '22']
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build on Node ${{ matrix.node-version }}
+        run: npm run build
+
+  # Code Quality Checks
+  code-quality:
+    name: Code Quality Checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check for console.log in production code
+        run: |
+          if grep -r "console\.log" --include="*.ts" --include="*.tsx" --include="*.js" --include="*.jsx" app/ components/ lib/ 2>/dev/null; then
+            echo "⚠️ Warning: console.log found in source code (should be removed in production)"
+            echo "This is just a warning - not blocking"
+          fi
+
+      - name: Check for TODO/FIXME comments
+        run: |
+          echo "Checking for TODO/FIXME comments..."
+          if grep -r "TODO\|FIXME" --include="*.ts" --include="*.tsx" app/ components/ lib/ 2>/dev/null; then
+            echo "ℹ️ Found TODO/FIXME comments (for reference only)"
+          fi
+
+  # All Checks Summary
+  all-checks:
+    name: All Checks Status
+    runs-on: ubuntu-latest
+    needs: [typecheck, lint, build, security, dependencies, node-compatibility, code-quality]
+    if: always()
+    steps:
+      - name: Check job results
+        run: |
+          if [ "${{ needs.typecheck.result }}" != "success" ] || \
+             [ "${{ needs.lint.result }}" != "success" ] || \
+             [ "${{ needs.build.result }}" != "success" ] || \
+             [ "${{ needs.security.result }}" != "success" ] || \
+             [ "${{ needs.dependencies.result }}" != "success" ]; then
+            echo "❌ Some checks failed. Please review the logs above."
+            exit 1
+          else
+            echo "✅ All checks passed!"
+          fi
+

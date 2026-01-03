@@ -1,0 +1,50 @@
+name: Pre-commit Checks
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+jobs:
+  pre-commit:
+    name: Pre-commit Validation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate package.json
+        run: |
+          node -e "JSON.parse(require('fs').readFileSync('package.json', 'utf8'))"
+          echo "✅ package.json is valid JSON"
+
+      - name: Check for common mistakes
+        run: |
+          echo "Running pre-commit checks..."
+          
+          # Check for large files
+          if find . -type f -size +5M ! -path "./node_modules/*" ! -path "./.next/*" ! -path "./.git/*"; then
+            echo "⚠️ Warning: Files larger than 5MB found"
+          fi
+          
+          # Check for sensitive data patterns (basic check)
+          if grep -r "password.*=" --include="*.ts" --include="*.tsx" --include="*.js" app/ components/ lib/ 2>/dev/null | grep -v "//.*password" | grep -v "password.*:"; then
+            echo "⚠️ Warning: Potential password in code detected"
+          fi
+          
+          echo "✅ Pre-commit checks completed"
+
+      - name: Quick type check
+        run: npx tsc --noEmit --skipLibCheck
+
+      - name: Quick lint check
+        run: npm run lint -- --max-warnings 0
+
