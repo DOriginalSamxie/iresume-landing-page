@@ -149,14 +149,14 @@ jobs:
             exit 1
           fi
 
-  # Node Version Compatibility (Optional - test on multiple Node versions)
+  # Node Version Compatibility (Next.js 16 requires Node.js >=20.9.0)
   node-compatibility:
     name: Node.js Compatibility (${{ matrix.node-version }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        node-version: ['18', '20', '22']
+        node-version: ['20', '22']
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
